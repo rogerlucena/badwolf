@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/badwolf/bql/table"
 	"github.com/google/badwolf/triple/literal"
 	"github.com/google/badwolf/triple/node"
 	"github.com/google/badwolf/triple/predicate"
@@ -63,4 +64,15 @@ func MustBuildPredicate(t *testing.T, predicateLiteral string) *predicate.Predic
 		t.Fatalf("could not parse predicate literal %q, got error: %v", predicateLiteral, err)
 	}
 	return p
+}
+
+// MustBuildTable builds a Table out of bindings and rows or makes the given test to fail.
+func MustBuildTable(t *testing.T, bindings []string, rows []table.Row) *table.Table {
+	t.Helper()
+	tbl, err := table.New(bindings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tbl.Data = rows
+	return tbl
 }

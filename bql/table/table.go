@@ -62,6 +62,17 @@ func New(bs []string) (*Table, error) {
 	}, nil
 }
 
+// Equal returns true if the tables t1 and t2 are equal.
+// func Equal(t1, t2 *Table) bool {
+// 	if !reflect.DeepEqual(t1.AvailableBindings, t2.AvailableBindings) ||
+// 		!reflect.DeepEqual(t1.mbs, t2.mbs) ||
+// 		// !reflect.DeepEqual(t1.Data, t2.Data) {
+// 		cmp.Equal(t1.Data, t2.Data) {
+// 		return false
+// 	}
+// 	return true
+// }
+
 // Cell contains one of the possible values that form rows.
 type Cell struct {
 	S *string              `json:"s,omitempty"`

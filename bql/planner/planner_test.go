@@ -18,14 +18,18 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"reflect"
+	"sort"
 	"strings"
 	"testing"
 
 	"github.com/google/badwolf/bql/grammar"
 	"github.com/google/badwolf/bql/semantic"
+	"github.com/google/badwolf/bql/table"
 	"github.com/google/badwolf/io"
 	"github.com/google/badwolf/storage"
 	"github.com/google/badwolf/storage/memory"
+	"github.com/google/badwolf/tools/testutil"
 	"github.com/google/badwolf/triple"
 	"github.com/google/badwolf/triple/literal"
 )
@@ -276,6 +280,7 @@ func TestPlannerQuery(t *testing.T) {
 		q         string
 		nBindings int
 		nRows     int
+		want      *table.Table
 	}{
 		{
 			q:         `select ?s, ?p, ?o from ?test where {?s ?p ?o};`,
@@ -860,7 +865,25 @@ func TestPlannerQuery(t *testing.T) {
 				}
 				HAVING ?time > 2016-02-01T00:00:00-07:00;`,
 			nBindings: 2,
-			nRows:     3,
+			nRows:     2,
+			want: testutil.MustBuildTable(
+				t,
+				[]string{"?time", "?p"},
+				[]table.Row{
+					{
+						"?p":    &table.Cell{P: testutil.MustBuildPredicate(t, `"bought"@[2016-02-01T00:00:00-08:00]`)},
+						"?time": &table.Cell{T: testutil.MustBuildTime(t, "2016-02-01T00:00:00-08:00")},
+					},
+					{
+						"?p":    &table.Cell{P: testutil.MustBuildPredicate(t, `"bought"@[2016-03-01T00:00:00-08:00]`)},
+						"?time": &table.Cell{T: testutil.MustBuildTime(t, "2016-03-01T00:00:00-08:00")},
+					},
+					{
+						"?p":    &table.Cell{P: testutil.MustBuildPredicate(t, `"bought"@[2016-04-01T00:00:00-08:00]`)},
+						"?time": &table.Cell{T: testutil.MustBuildTime(t, "2016-04-01T00:00:00-08:00")},
+					},
+				},
+			),
 		},
 		{
 			q: `SELECT ?s, ?p, ?o
@@ -1001,16 +1024,101 @@ func TestPlannerQuery(t *testing.T) {
 
 		// Actual test:
 		tbl, err := plnr.Execute(ctx)
+
 		if err != nil {
 			t.Fatalf("planner.Execute(%s)\n= _, %v; want _, nil", entry.q, err)
 		}
-		if got, want := len(tbl.Bindings()), entry.nBindings; got != want {
-			t.Errorf("planner.Execute(%s)\n= a Table with %d bindings; want %d", entry.q, got, want)
+
+		if entry.want == nil {
+			continue
 		}
-		if got, want := len(tbl.Rows()), entry.nRows; got != want {
-			t.Errorf("planner.Execute(%s)\n= a Table with %d rows; want %d\nTable:\n%v\n", entry.q, got, want, tbl)
+		fmt.Printf("tbl: %v\n", tbl.AvailableBindings)
+		fmt.Printf("want: %v\n", entry.want.AvailableBindings)
+		for k, v := range tbl.Data {
+			fmt.Printf("%v: %v\n", k, v)
+		}
+		for k, v := range entry.want.Data {
+			fmt.Printf("%v: %v\n", k, v)
+		}
+		if !sameAvailableData(tbl, entry.want) {
+			t.Errorf("planner.Execute(%s)\n=\n%v;\nwant:\n%v", entry.q, tbl, entry.want)
+		}
+
+		// if !reflect.DeepEqual(tbl.Bindings(), entry.wantBindings) {
+		// 	t.Errorf("planner.Execute(%s)\n=a Table with bindings %v; want %v", entry.q, tbl.Bindings(), entry.wantBindings)
+		// }
+		// if !reflect.DeepEqual(tbl.Rows(), entry.wantRows) {
+		// 	t.Errorf("planner.Execute(%s)\n=a Table with rows:\n%v;\nwant:\n%v", entry.q, tbl.Rows(), entry.wantRows)
+		// }
+
+		// if got, want := len(tbl.Bindings()), entry.nBindings; got != want {
+		// 	t.Errorf("planner.Execute(%s)\n= a Table with %d bindings; want %d", entry.q, got, want)
+		// }
+		// if got, want := len(tbl.Rows()), entry.nRows; got != want {
+		// 	t.Errorf("planner.Execute(%s)\n= a Table with %d rows; want %d\nTable:\n%v\n", entry.q, got, want, tbl)
+		// }
+	}
+}
+
+func sameAvailableData(t1, t2 *table.Table) bool {
+	sort.Strings(t1.Bindings())
+	sort.Strings(t2.Bindings())
+	if !reflect.DeepEqual(t1.Bindings(), t2.Bindings()) {
+		return false
+	}
+
+	if len(t1.Rows()) != len(t2.Rows()) {
+		return false
+	}
+
+	// sortConfig := func(bindings []string) table.SortConfig {
+	// 	cfg := make([]struct {
+	// 		string
+	// 		bool
+	// 	}, len(bindings))
+	// 	for _, b := range bindings {
+	// 		cfg = append(cfg, struct {
+	// 			string
+	// 			bool
+	// 		}{b, false})
+	// 	}
+	// 	return table.SortConfig(cfg)
+	// }
+
+	rowCmp := func(rs []table.Row, bds []string) func(i, j int) bool {
+		cmp := func(i, j int) bool {
+			var b1 *bytes.Buffer
+			var b2 *bytes.Buffer
+			err := rs[i].ToTextLine(b1, bds, " ")
+			if err != nil {
+				panic("--- cmp error1 ---")
+			}
+			err = rs[j].ToTextLine(b2, bds, " ")
+			if err != nil {
+				panic("--- cmp error2 ---")
+			}
+			return b1.String() < b2.String()
+		}
+		return cmp
+	}
+
+	sort.SliceStable(t1.Rows(), rowCmp(t1.Rows(), t1.Bindings()))
+	sort.SliceStable(t2.Rows(), rowCmp(t2.Rows(), t2.Bindings()))
+
+	for iRow := range t1.Rows() {
+		r1, _ := t1.Row(iRow)
+		r2, _ := t2.Row(iRow)
+		for _, b := range t1.Bindings() {
+			// if *r1[b] != *r2[b] {
+			if !reflect.DeepEqual(r1[b], r2[b]) {
+				fmt.Printf("iRow: %d, b: %s\n", iRow, b)
+				fmt.Printf("r1[b]: %v\nr2[b]: %v", *r1[b], *r2[b])
+				return false
+			}
 		}
 	}
+
+	return true
 }
 
 func TestPlannerQueryError(t *testing.T) {
